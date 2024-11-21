@@ -1,47 +1,71 @@
-from fastapi import FastAPI, Body
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 import uvicorn
-import user_db
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
+from database import user_db
+from models.user import UserBase, UserLoginRequest
 
-class User(BaseModel):
-    username: str
-    password: str
+
+app = FastAPI(root_path='/api')
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+
+@app.on_event("startup")
+async def startup_event():
+    user_db.create_table()
 
 @app.post("/login")
-async def get_user(request=Body()):
-    token = request['token'].split()[1]
-    if token:
-        new_token = user_db.check_jwt_token(token)
-        if new_token:
-            return JSONResponse({"token": new_token}, status_code=200)
-    if request['username'] and request['password']:
-        user = user_db.get_user(username=request['username'])
-        if user['password'] == request['passwword']:
-            user_db.update_last_activity(username=request['username'])
-            new_token = user_db.create_jwt({user['user_id']})
-            return JSONResponse({"token": new_token}, status_code=200)
-        elif user:
-            return JSONResponse({"error": "User already exists"}, status_code=400)
-        if not user:
-            user_db.update_last_activity(username=request['username'])
-            user = user_db.user_register(username=request['username'], pswd=request['password'])
-            token = user_db.create_jwt({"user_id": user['user_id']})
-            return JSONResponse({"token": token}, status_code=200)
+async def login(
+    request: UserLoginRequest | None = None
+):
+    try:
+        if request:
+            user = user_db.get_user_by_username(request.username)
+            if user and user["password"] == request.password:
+                user_db.update_last_activity(request.username)
+                new_token = user_db.create_jwt({"user_id": user["user_id"]})
+                return JSONResponse({"token": new_token}, status_code=200)
+            elif not user:
+                new_user = user_db.user_register(request.username, request.password)
+                new_token = user_db.create_jwt({"user_id": new_user["user_id"][0]})
+                user_db.update_last_activity(request.username)
+                return JSONResponse({"token": new_token}, status_code=200)
 
-@app.post("/topliststreak")
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/topliststreak")
 async def get_toplist():
     return user_db.top_by_days_streak()
 
-@app.post("/toplistpoints")
+@app.get("/toplistpoints")
 async def get_toplist():
     return user_db.top_by_points()
 
-@app.post("/profile")
-async def get_user(request=Body()):
-    return user_db.get_user(username=request['token'])
+@app.get("/profile")
+async def get_profile(authorization: str | None = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=400, detail="Invalid Authorization header format")
+    token = authorization.split()[1]
+    payload = user_db.jwt_token_payload(token)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Invalid Authorization")
+    
+    user_data = user_db.get_user_by_id(payload['user_id'])
+    
+    if not user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserBase(**dict(user_data))
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
