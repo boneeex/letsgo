@@ -39,7 +39,7 @@ async def login(
                 user_db.update_last_activity(request.username)
                 return JSONResponse({"token": new_token}, status_code=200)
 
-        raise HTTPException(status_code=400, detail="Invalid credentials")
+        raise HTTPException(status_code=400, detail="Неверный пароль")
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -55,16 +55,16 @@ async def get_toplist():
 @app.get("/profile")
 async def get_profile(authorization: str | None = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=400, detail="Invalid Authorization header format")
+        raise HTTPException(status_code=400, detail="Неверный формат авторизации")
     token = authorization.split()[1]
     payload = user_db.jwt_token_payload(token)
     if not payload:
-        raise HTTPException(status_code=400, detail="Invalid Authorization")
+        raise HTTPException(status_code=400, detail="Пользователь не найден")
     
     user_data = user_db.get_user_by_id(payload['user_id'])
     
     if not user_data:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
     return UserBase(**dict(user_data))
 
 if __name__ == "__main__":
